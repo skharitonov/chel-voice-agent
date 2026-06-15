@@ -108,8 +108,11 @@ def test_director_three_rounds_to_extract() -> None:
     d.advance("Пришлите на почту")
     check(st.stage == StageA.GATEKEEPER_EXTRACT.value,
           f"после 3 кругов -> extract (stage={st.stage})")
-    d.advance("Ладно, записывайте почту")
-    check(st.stage == StageA.WRAP.value, "extract -> wrap")
+    # extract длится 2 хода (добор ФИО + просьба переключить), потом WRAP.
+    d.advance("Иван зовут")
+    check(st.stage == StageA.GATEKEEPER_EXTRACT.value, "extract -> extract (добор ФИО)")
+    d.advance("Иванов, Иван Петрович")
+    check(st.stage == StageA.WRAP.value, "extract -> wrap (после 2 ходов)")
 
 
 def test_director_connect_to_lpr() -> None:

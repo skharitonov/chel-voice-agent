@@ -6,12 +6,23 @@
 
 from __future__ import annotations
 
+import re
+
 from . import compliance, objections
 from .director import DialogueDirector
 from .providers import LLMProvider, load_prompt
 from .state import ConversationState
 
 _SYSTEM_FILE = {"A": "qualify_system.md", "B": "find_lpr_system.md"}
+
+# Модель иногда эхом повторяет наши управляющие маркеры ([ВОЗРАЖЕНИЕ ...],
+# [СТАДИЯ ...], [ГОЛОС ...], [ТОН ...]) — их нельзя озвучивать. Вырезаем любые [...].
+_BRACKET = re.compile(r"\[[^\]]*\]")
+
+
+def strip_brackets(text: str) -> str:
+    """Убрать утёкшие управляющие маркеры [...] из реплики (до TTS/транскрипта)."""
+    return _BRACKET.sub("", text).strip()
 
 
 def build_system_prompt(state: ConversationState) -> str:
@@ -21,6 +32,8 @@ def build_system_prompt(state: ConversationState) -> str:
         "\n\n# Тактики возражений\n" + load_prompt("shared/objections.md"),
         "\n\n# Комплаенс\n" + load_prompt("shared/compliance.md"),
         f"\n\n# Контекст звонка\n"
+        f"Тебя зовут {state.agent_name}. Представляйся ТОЛЬКО этим именем — одинаково "
+        f"каждый раз, не придумывай другое. "
         f"Компания: {state.company or '—'}. Телефон: {state.phone}. "
         + (f"Целевая роль ЛПР: {state.target_role}." if state.mode == "B" else "")
         + (f" Известно ФИО энергетика (адресное открытие): {state.lpr_name_hint}."
@@ -66,13 +79,15 @@ def prepare_turn(state: ConversationState, llm: LLMProvider) -> tuple[str, list[
     if state.voice_mode:
         stage = state.stage or ""
         if stage == "gatekeeper_intro":
-            max_tokens = 110   # приветствие — одна фраза, но не резать на полуслове
+            max_tokens = 100   # приветствие — одна фраза, но не резать на полуслове
         elif stage.startswith("gatekeeper"):
-            max_tokens = 75    # ответ секретарю — 1 короткое предложение
+            max_tokens = 70    # ответ секретарю — 1 короткое предложение
         else:
-            max_tokens = 160   # фаза ЛПР — допускаем чуть длиннее
-        control += ("\n[ГОЛОС: одна мысль, 1–2 коротких предложения, целиком "
-                    "законченные. Без перечислений и монолога. Приветствие — одной фразой.]")
+            max_tokens = 120   # фаза ЛПР — чуть длиннее, но не монолог
+        control += ("\n[ГОЛОС: МАКСИМУМ 2 коротких предложения, целиком законченные. "
+                    "Это телефон — длинные реплики собеседник не слушает и перебивает. "
+                    "Начни с короткой вводной части (чтобы ответ звучал сразу). Без "
+                    "перечислений, без монолога. Приветствие — одной фразой.]")
 
     system = build_system_prompt(state)
     messages = state.history_for_llm()
@@ -94,7 +109,7 @@ def generate_reply(state: ConversationState, llm: LLMProvider,
                    *, max_regen: int = 1) -> str:
     """Сгенерировать следующую реплику агента (нестриминговый путь, фаза 1/текст)."""
     system, messages, max_tokens = prepare_turn(state, llm)
-    reply = llm.complete(system, messages, max_tokens=max_tokens, temperature=0.7)
+    reply = strip_brackets(llm.complete(system, messages, max_tokens=max_tokens, temperature=0.7))
 
     # ComplianceGuard: при нарушении — регенерация с подсказкой.
     for _ in range(max_regen):
@@ -104,7 +119,8 @@ def generate_reply(state: ConversationState, llm: LLMProvider,
         messages.append({"role": "assistant", "content": reply})
         messages.append({"role": "user",
                          "content": f"[GUARD: {compliance.REGENERATION_HINT}]"})
-        reply = llm.complete(system, messages, max_tokens=max_tokens, temperature=0.5)
+        reply = strip_brackets(
+            llm.complete(system, messages, max_tokens=max_tokens, temperature=0.5))
     else:
         if not compliance.check_agent_reply(reply).ok:
             reply = fallback_reply(state)

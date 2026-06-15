@@ -22,13 +22,16 @@ logger = logging.getLogger("chel.voice")
 
 from . import compliance
 from .director import DialogueDirector
-from .pipeline import fallback_reply, generate_reply, prepare_turn
+from .pipeline import _BRACKET, fallback_reply, generate_reply, prepare_turn, strip_brackets
 from .providers import LLMProvider
-from .state import ConversationState
+from .state import ConversationState, StageA, StageB
 
 # Граница предложения: знак конца + пробел (на лету не используем '$', чтобы не
 # принять незаконченный хвост буфера за предложение — хвост сбрасываем в конце).
 _SENT_BOUNDARY = re.compile(r"[.!?…]+\s")
+# Клауза: + запятые/тире/двоеточия. ПЕРВЫЙ кусок ответа отдаём в TTS по клаузе,
+# чтобы первый звук пошёл раньше; дальше — по предложениям (ровнее просодия).
+_CLAUSE_BOUNDARY = re.compile(r"[.!?…,:;—–]+\s")
 
 
 class ChelLLM(llm.LLM):
@@ -112,6 +115,12 @@ class _ChelStream(llm.LLMStream):
             self._emit(full)
 
         st.add("agent", full)
+        # Финальная реплика (стадия WRAP) — разговор завершён → voice_core положит
+        # трубку. НО только если это прощание, а НЕ вопрос: на стадии WRAP агент
+        # может ещё спрашивать ФИО/почту (Правило №1) и обязан дождаться ответа.
+        if (st.stage == StageA.WRAP.value or st.stage == StageB.WRAP.value) \
+                and not full.rstrip().endswith("?"):
+            st.finished = True
 
     async def _stream_reply(self, system: str, messages: list[dict], max_tokens: int) -> str:
         """Стримит токены LLM, режет на предложения, прогоняет каждое через guard и
@@ -122,19 +131,27 @@ class _ChelStream(llm.LLMStream):
 
         def worker() -> None:
             buf = ""
+            boundary = _CLAUSE_BOUNDARY  # первый кусок — по клаузе (быстрый старт)
             try:
                 for piece in self._chel._text_llm.complete_stream(
                         system, messages, max_tokens=max_tokens, temperature=0.7):
                     buf += piece
+                    # Вырезаем утёкшие маркеры [...] (без обрезки пробелов — они
+                    # нужны для границ предложений); если скобка ещё не закрыта —
+                    # ждём (не режем предложение внутри маркера).
+                    buf = _BRACKET.sub("", buf)
+                    if buf.rfind("[") > buf.rfind("]"):
+                        continue
                     while True:
-                        m = _SENT_BOUNDARY.search(buf)
+                        m = boundary.search(buf)
                         if not m:
                             break
                         sent = buf[:m.end()].strip()
                         buf = buf[m.end():]
                         if sent:
                             loop.call_soon_threadsafe(q.put_nowait, ("s", sent))
-                tail = buf.strip()
+                            boundary = _SENT_BOUNDARY  # дальше — по предложениям
+                tail = strip_brackets(buf)
                 if tail:
                     loop.call_soon_threadsafe(q.put_nowait, ("s", tail))
             except Exception as e:  # noqa: BLE001 — пробросим как сигнал к fallback

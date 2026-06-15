@@ -57,6 +57,7 @@ class ConversationState(BaseModel):
     company: Optional[str] = None
     target_role: Optional[str] = None   # для сценария B
     lpr_name_hint: Optional[str] = None  # ФИО из ОСИНТ -> адресное открытие (A, --lpr-name)
+    agent_name: str = "Олег"             # имя агента — постоянное (а не разное каждый раз)
 
     stage: str = ""                    # значение StageA/StageB
     tactic: str = ""                   # человекочитаемая тактика для директивы LLM
@@ -65,6 +66,7 @@ class ConversationState(BaseModel):
 
     # Сценарий A: служебные счётчики/флаги (скрипт §2).
     objection_rounds: int = 0          # сколько кругов возражений секретаря пройдено
+    extract_rounds: int = 0            # ходов на стадии извлечения (добор ФИО + переключение)
     uks_triggered: list[str] = Field(default_factory=list)  # какие УКС сработали
     secretary_name: Optional[str] = None
     binary_filter: str = "unknown"     # underground_yes | underground_no | unknown
