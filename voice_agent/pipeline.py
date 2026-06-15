@@ -11,7 +11,7 @@ import re
 from . import compliance, objections
 from .director import DialogueDirector
 from .providers import LLMProvider, load_prompt
-from .state import ConversationState
+from .state import ConversationState, StageA, StageB
 
 _SYSTEM_FILE = {"A": "qualify_system.md", "B": "find_lpr_system.md"}
 
@@ -40,6 +40,40 @@ def build_system_prompt(state: ConversationState) -> str:
            if state.mode == "A" and state.lpr_name_hint else ""),
     ]
     return "".join(parts)
+
+
+def accept_user_turn(state: ConversationState, text: str) -> None:
+    """Принять ход собеседника: записать, классифицировать возражение, отметить
+    отказ, продвинуть стадию. Единая точка для голоса (lk_llm) и текстового QA.
+
+    Классификация УКС — ЗДЕСЬ (а не в generate_reply), чтобы director.advance
+    видел возражение текущей реплики сразу, без задержки на ход (иначе бинарный
+    фильтр УКС-7 и т.п. срабатывали с опозданием/не срабатывали)."""
+    text = (text or "").strip()
+    if not text:
+        return
+    state.add("interlocutor", text)
+    uks = objections.classify(text)
+    if uks and uks.id not in state.uks_triggered:
+        state.uks_triggered.append(uks.id)
+    if compliance.detect_refusal(text):
+        state.refused = True
+    DialogueDirector(state).advance(text)
+
+
+def finalize_agent_reply(state: ConversationState, reply: str) -> None:
+    """Зафиксировать реплику агента и решить, завершён ли разговор.
+
+    Завершаем только если: стадия WRAP, текущая реплика — НЕ вопрос, и прошлый
+    ход агента тоже НЕ был вопросом (иначе это ход-реакция на ответ собеседника —
+    нельзя прощаться, не отработав полученное: добор ФИО / переключение)."""
+    state.add("agent", reply)
+    prev_was_question = state.last_agent_question
+    this_is_question = reply.rstrip().endswith("?")
+    state.last_agent_question = this_is_question
+    if (state.stage in (StageA.WRAP.value, StageB.WRAP.value)
+            and not this_is_question and not prev_was_question):
+        state.finished = True
 
 
 def prepare_turn(state: ConversationState, llm: LLMProvider) -> tuple[str, list[dict], int]:

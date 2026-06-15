@@ -20,11 +20,12 @@ from livekit.agents import llm, utils
 
 logger = logging.getLogger("chel.voice")
 
-from . import compliance
-from .director import DialogueDirector
-from .pipeline import _BRACKET, fallback_reply, generate_reply, prepare_turn, strip_brackets
+from .pipeline import (
+    _BRACKET, accept_user_turn, fallback_reply, finalize_agent_reply,
+    generate_reply, prepare_turn,
+)
 from .providers import LLMProvider
-from .state import ConversationState, StageA, StageB
+from .state import ConversationState
 
 # Граница предложения: знак конца + пробел (на лету не используем '$', чтобы не
 # принять незаконченный хвост буфера за предложение — хвост сбрасываем в конце).
@@ -82,15 +83,12 @@ class _ChelStream(llm.LLMStream):
         user_text = self._latest_user_text()
         if user_text and user_text != self._chel._last_user:
             self._chel._last_user = user_text
-            st.add("interlocutor", user_text)
-            if compliance.detect_refusal(user_text):
-                st.refused = True
-            DialogueDirector(st).advance(user_text)
+            accept_user_turn(st, user_text)
 
         # 2) Отказ → короткое прощание, без обращения к LLM.
         if st.refused:
             st.finished = True
-            reply = "Понял, извините за беспокойство. Всего доброго!"
+            reply = "Понял, извините за беспокойство. До свидания!"
             st.add("agent", reply)
             self._emit(reply)
             return
@@ -114,19 +112,7 @@ class _ChelStream(llm.LLMStream):
                 full = fallback_reply(st)
             self._emit(full)
 
-        st.add("agent", full)
-        # Завершаем (→ voice_core кладёт трубку) только если ВСЁ верно:
-        #   - стадия WRAP;
-        #   - текущая реплика — НЕ вопрос (иначе ждём ответа);
-        #   - прошлый ход агента тоже НЕ был вопросом. Иначе это ход-реакция на
-        #     ответ собеседника (напр. он только что назвал имя энергетика) —
-        #     нельзя прощаться, не отработав полученное (добор ФИО/переключение).
-        prev_was_question = st.last_agent_question
-        this_is_question = full.rstrip().endswith("?")
-        st.last_agent_question = this_is_question
-        if (st.stage in (StageA.WRAP.value, StageB.WRAP.value)
-                and not this_is_question and not prev_was_question):
-            st.finished = True
+        finalize_agent_reply(st, full)
 
     async def _stream_reply(self, system: str, messages: list[dict], max_tokens: int) -> str:
         """Стримит токены LLM, режет на предложения, прогоняет каждое через guard и
