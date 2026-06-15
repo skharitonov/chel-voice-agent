@@ -1,0 +1,12 @@
+# --- Фаза 1: текстовая симуляция (рабочий прототип) ---
+pydantic>=2.6
+python-dotenv>=1.0
+# LLM-бэкенд (нужен хотя бы один — выбор через LLM_BACKEND в .env):
+anthropic>=0.40.0      # LLM_BACKEND=anthropic (прямой Anthropic API)
+openai>=1.40.0         # LLM_BACKEND=openrouter (OpenRouter, OpenAI-совместимый шлюз)
+
+# --- Фаза 2: локальный голос (LiveKit Agents, console-режим) ---
+# Ставится вместе с плагинами STT/TTS/VAD как extras:
+livekit-agents[deepgram,inworld,silero,turn-detector]~=1.5
+# STT: Deepgram Nova-3 (multilingual) · TTS: Inworld (офиц. плагин) · VAD: Silero
+# Запуск: python -m voice_agent.voice_core console  (см. voice_agent/voice_core.py)

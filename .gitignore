@@ -1,0 +1,22 @@
+# Секреты
+.env
+
+# Результаты звонков и транскрипты
+results/
+
+# Аудиозаписи console-сессий (--record)
+console-recordings/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# IDE / OS
+.vscode/
+.idea/
+.obsidian/
+.DS_Store
+Thumbs.db
