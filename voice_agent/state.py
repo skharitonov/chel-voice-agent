@@ -67,6 +67,7 @@ class ConversationState(BaseModel):
     # Сценарий A: служебные счётчики/флаги (скрипт §2).
     objection_rounds: int = 0          # сколько кругов возражений секретаря пройдено
     extract_rounds: int = 0            # ходов на стадии извлечения (добор ФИО + переключение)
+    last_agent_question: bool = False  # был ли прошлый ход агента вопросом (тогда не завершать)
     uks_triggered: list[str] = Field(default_factory=list)  # какие УКС сработали
     secretary_name: Optional[str] = None
     binary_filter: str = "unknown"     # underground_yes | underground_no | unknown

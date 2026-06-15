@@ -115,11 +115,17 @@ class _ChelStream(llm.LLMStream):
             self._emit(full)
 
         st.add("agent", full)
-        # Финальная реплика (стадия WRAP) — разговор завершён → voice_core положит
-        # трубку. НО только если это прощание, а НЕ вопрос: на стадии WRAP агент
-        # может ещё спрашивать ФИО/почту (Правило №1) и обязан дождаться ответа.
-        if (st.stage == StageA.WRAP.value or st.stage == StageB.WRAP.value) \
-                and not full.rstrip().endswith("?"):
+        # Завершаем (→ voice_core кладёт трубку) только если ВСЁ верно:
+        #   - стадия WRAP;
+        #   - текущая реплика — НЕ вопрос (иначе ждём ответа);
+        #   - прошлый ход агента тоже НЕ был вопросом. Иначе это ход-реакция на
+        #     ответ собеседника (напр. он только что назвал имя энергетика) —
+        #     нельзя прощаться, не отработав полученное (добор ФИО/переключение).
+        prev_was_question = st.last_agent_question
+        this_is_question = full.rstrip().endswith("?")
+        st.last_agent_question = this_is_question
+        if (st.stage in (StageA.WRAP.value, StageB.WRAP.value)
+                and not this_is_question and not prev_was_question):
             st.finished = True
 
     async def _stream_reply(self, system: str, messages: list[dict], max_tokens: int) -> str:
